@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+version="$1"
+install_path="$2"
+repo="csa.docker.pkg.sehlat.io/node"
+
+source "$(dirname "$0")/../lib/utils.bash"
+
+os="$(get_os)"
+arch="$(get_arch)"
+
+platform="${os}-${arch}"
+
+ref="${repo}:${version}-${platform}"
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+cd "$tmp_dir"
+
+echo "Pulling $ref..."
+oras pull "$ref" --output . || {
+  echo "Error: Failed to pull artifact $ref"
+  exit 1
+}
+
+archive=$(find . -type f -name '*.tar.gz' -o -name '*.zip')
+echo "Extracting $archive to $install_path..."
+
+mkdir -p "$install_path"
+
+if [[ "$archive" == *.zip ]]; then
+  unzip "$archive" -d "$install_path"
+else
+  tar -xf "$archive" -C "$install_path" --strip-components=1
+fi

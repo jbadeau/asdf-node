@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="csa.docker.pkg.sehlat.io/node"
+
+# List all tags and filter valid semver versions
+oras repo tags "$REPO" | \
+  grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | \
+  sort -V
