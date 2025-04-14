@@ -1,36 +1,83 @@
 #!/usr/bin/env bash
+
 set -euo pipefail
 
-version="$1"
-install_path="$2"
-repo="csa.docker.pkg.sehlat.io/node"
+installer() {
+  local install_type="$1"
+  local version="$2"
+  local install_path="$3"
 
-source "$(dirname "$0")/../lib/utils.bash"
+  if [ "$install_type" != "version" ]; then
+    echo "Only official versions are supported."
+    exit 1
+  fi
 
-os="$(get_os)"
-arch="$(get_arch)"
+  if ! command -v oras &>/dev/null; then
+    echo "oras CLI is required but not installed. See https://oras.land"
+    exit 1
+  fi
 
-platform="${os}-${arch}"
+  if ! command -v jq &>/dev/null; then
+    echo "jq is required but not installed"
+    exit 1
+  fi
 
-ref="${repo}:${version}-${platform}"
+  local os arch platform_tag
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  arch=$(uname -m)
 
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
-cd "$tmp_dir"
+  case "$arch" in
+    x86_64) arch="x86_64" ;;
+    arm64|aarch64) arch="aarch64" ;;
+    *) echo "Unsupported architecture: $arch" && exit 1 ;;
+  esac
 
-echo "Pulling $ref..."
-oras pull "$ref" --output . || {
-  echo "Error: Failed to pull artifact $ref"
-  exit 1
+  if [[ "$os" == "darwin" ]]; then
+    os="macos"
+  elif [[ "$os" == "linux" ]]; then
+    os="linux"
+  else
+    echo "Unsupported OS: $os"
+    exit 1
+  fi
+
+  platform_tag="${os}/${arch}"
+  image="csa.docker.pkg.sehlat.io/node:${version}"
+
+  echo "Installing version ${version} for ${platform_tag}..."
+
+  tmp_dir=$(mktemp -d)
+  trap "rm -rf '$tmp_dir'" EXIT
+
+  # Fetch the index and find the correct digest
+  manifest_digest=$(oras manifest fetch "$image" \
+    | jq -r --arg os "$os" --arg arch "$arch" \
+    '.manifests[] | select(.platform.os == $os and .platform.architecture == $arch) | .digest')
+
+  if [[ -z "$manifest_digest" ]]; then
+    echo "No platform-specific artifact found for ${platform_tag}"
+    exit 1
+  fi
+
+  # Pull the resolved manifest directly
+  echo "Found manifest: $manifest_digest, pulling..."
+  (
+    cd "$tmp_dir"
+    oras pull "${image%@*}@${manifest_digest}"
+  )
+
+  # Extract the .tar or .tar.gz layer to the install path
+  archive=$(find "$tmp_dir" -type f \( -name '*.tar.gz' -o -name '*.tar' \) | head -n1)
+
+  if [[ -z "$archive" ]]; then
+    echo "No archive found in pulled content"
+    exit 1
+  fi
+
+  mkdir -p "$install_path"
+  tar --strip-components=1 -xf "$archive" -C "$install_path"
+
+  echo "✅ Installed to $install_path"
 }
 
-archive=$(find . -type f -name '*.tar.gz' -o -name '*.zip')
-echo "Extracting $archive to $install_path..."
-
-mkdir -p "$install_path"
-
-if [[ "$archive" == *.zip ]]; then
-  unzip "$archive" -d "$install_path"
-else
-  tar -xf "$archive" -C "$install_path" --strip-components=1
-fi
+installer "$ASDF_INSTALL_TYPE" "$ASDF_INSTALL_VERSION" "$ASDF_INSTALL_PATH"

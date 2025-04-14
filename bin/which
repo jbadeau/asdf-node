@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Outputs the path to the installed tool for the current version
+
+echo "node"
+echo "npm"
+echo "npx"
